@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Real-Time Network Intrusion Detection System — Live XGBoost + TCN Inference Dashboard">
+    <title>NIDS-Live — Network Intrusion Detection</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- Header Bar                                                      -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <header id="header">
+        <div class="header-left">
+            <h1 id="app-title">
+                <span class="title-icon">🛡</span> NIDS-Live
+            </h1>
+            <span class="header-subtitle">Network Intrusion Detection</span>
+        </div>
+        <div class="header-right">
+            <div class="status-indicator">
+                <span id="status-dot" class="status-dot dot-stopped"></span>
+                <span id="status-text" class="status-text">Stopped</span>
+            </div>
+            <select id="interface-select">
+                <option value="">Select Interface...</option>
+            </select>
+            <select id="engine-select">
+                <option value="auto">Auto Engine</option>
+                <option value="nfstream">nfstream</option>
+                <option value="scapy">scapy</option>
+            </select>
+            <button id="start-stop-btn" class="btn btn-start" onclick="toggleCapture()">
+                Start Capture
+            </button>
+        </div>
+    </header>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- Error Banner                                                    -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div id="error-banner" class="error-banner hidden">
+        <span id="error-message"></span>
+        <button class="error-dismiss" onclick="dismissError()">✕</button>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- Domain Shift Banner                                             -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div id="shift-banner" class="shift-banner hidden">
+        <span id="shift-message">Domain shift detected in features. <a href="#adaptation-panel">Consider running byte-column adaptation.</a></span>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- Stat Cards                                                      -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <section id="stats-row" class="stats-row">
+        <div class="stat-card">
+            <div class="stat-label">Total Flows</div>
+            <div class="stat-value" id="stat-flows">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Total Packets</div>
+            <div class="stat-value" id="stat-packets">0</div>
+        </div>
+        <div class="stat-card stat-alert">
+            <div class="stat-label">XGBoost Alerts</div>
+            <div class="stat-value" id="stat-xgb-alerts">0</div>
+        </div>
+        <div class="stat-card stat-alert">
+            <div class="stat-label">TCN Alerts</div>
+            <div class="stat-value" id="stat-tcn-alerts">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Engine</div>
+            <div class="stat-value stat-engine" id="stat-engine">—</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Uptime</div>
+            <div class="stat-value" id="stat-uptime">0s</div>
+        </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- Main Content: Flow Table + Right Panel                          -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <main id="main-content" class="main-content">
+
+        <!-- Left: Live Flow Table -->
+        <section class="panel flow-table-panel">
+            <h2 class="panel-title">Live Flows</h2>
+            <div class="table-wrapper">
+                <table id="flow-table">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Src IP</th>
+                            <th>Dst IP</th>
+                            <th>Proto</th>
+                            <th>XGB Prob</th>
+                            <th>TCN Prob</th>
+                            <th>Alert</th>
+                        </tr>
+                    </thead>
+                    <tbody id="flow-tbody">
+                        <tr class="placeholder-row">
+                            <td colspan="7">No flows captured yet. Start a capture to begin monitoring.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Right: Top IPs + Alert Feed -->
+        <aside class="panel right-panel">
+
+            <!-- Top Suspicious IPs -->
+            <div class="sub-panel">
+                <h2 class="panel-title">Top Suspicious IPs</h2>
+                <div id="top-ips-list" class="top-ips-list">
+                    <div class="placeholder-text">No data yet.</div>
+                </div>
+            </div>
+
+            <!-- Alert Feed -->
+            <div class="sub-panel alert-feed-panel">
+                <h2 class="panel-title">Alert Feed</h2>
+                <div id="alert-feed" class="alert-feed">
+                    <div class="placeholder-text">No alerts triggered.</div>
+                </div>
+            </div>
+
+        </aside>
+
+    </main>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- Detection Sensitivity Panel                                     -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <section class="panel sensitivity-panel">
+        <div class="panel-header sensitivity-header" onclick="toggleSensitivityPanel()">
+            <h2 class="panel-title">⚙ Detection Sensitivity</h2>
+            <span id="sensitivity-toggle-icon" class="toggle-icon">▼</span>
+        </div>
+        <div id="sensitivity-content" class="sensitivity-content hidden">
+            
+            <div class="sensitivity-grid">
+                <!-- Column 1: Manual Controls -->
+                <div class="sensitivity-col">
+                    <h3>Manual Control</h3>
+                    <div class="slider-group">
+                        <div class="slider-header">
+                            <label for="xgb-slider">XGBoost Threshold</label>
+                            <span id="xgb-val-display" class="slider-val">0.200</span>
+                        </div>
+                        <input type="range" id="xgb-slider" class="threshold-slider" step="0.005" min="0.10" max="0.60" value="0.20">
+                        <div class="slider-footer">
+                            <span class="slider-bounds" id="xgb-bounds">0.10 - 0.60</span>
+                            <a href="#" onclick="resetThresholds(event)" class="reset-link">Reset to default</a>
+                        </div>
+                    </div>
+                    
+                    <div class="slider-group">
+                        <div class="slider-header">
+                            <label for="tcn-slider">TCN Threshold</label>
+                            <span id="tcn-val-display" class="slider-val">0.022</span>
+                        </div>
+                        <input type="range" id="tcn-slider" class="threshold-slider" step="0.001" min="0.010" max="0.100" value="0.022">
+                        <div class="slider-footer">
+                            <span class="slider-bounds" id="tcn-bounds">0.010 - 0.100</span>
+                            <a href="#" onclick="resetThresholds(event)" class="reset-link">Reset to default</a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Column 2: Calibration Assistant -->
+                <div class="sensitivity-col">
+                    <h3>Calibrate against current network</h3>
+                    <p class="help-text">Record a baseline of non-attack traffic to suggest thresholds. Alerts remain active.</p>
+                    
+                    <div id="calib-idle" class="calib-state">
+                        <button class="btn btn-secondary" onclick="startCalibration()">Start Calibration</button>
+                    </div>
+                    
+                    <div id="calib-active" class="calib-state hidden">
+                        <div class="calib-banner">
+                            <span class="calib-spinner"></span> Calibrating — recording baseline...
+                        </div>
+                        <div class="calib-stats">Samples recorded: <span id="calib-samples">0</span></div>
+                        <button class="btn btn-stop" onclick="stopCalibration()">Stop & View Suggestions</button>
+                    </div>
+                    
+                    <div id="calib-result" class="calib-state hidden">
+                        <div class="calib-suggestions">
+                            <div class="calib-suggestion-row">
+                                <span>XGB:</span> <span id="calib-xgb-val" class="suggested-val">0.000</span>
+                            </div>
+                            <div class="calib-suggestion-row">
+                                <span>TCN:</span> <span id="calib-tcn-val" class="suggested-val">0.000</span>
+                            </div>
+                        </div>
+                        <div class="calib-actions">
+                            <button class="btn btn-start" onclick="applyCalibration()">Apply suggested</button>
+                            <button class="btn btn-secondary" onclick="discardCalibration()">Discard</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Column 3: Auto-Tuner & Audit -->
+                <div class="sensitivity-col">
+                    <h3>Auto-tune (experimental)</h3>
+                    <div class="auto-tune-control">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="auto-tune-toggle" onchange="toggleAutoTune()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span id="auto-tune-status">Disabled</span>
+                    </div>
+                    <p class="help-text">Evaluates thresholds every 5m over a 30m trailing window (excluding alerts). Moves max 10% per cycle.</p>
+                </div>
+            </div>
+
+            <!-- Audit Log Table -->
+            <div class="audit-log-section">
+                <h3>Threshold Change History</h3>
+                <div class="table-wrapper audit-table-wrapper">
+                    <table id="audit-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Model</th>
+                                <th>Old</th>
+                                <th>New</th>
+                                <th>Reason</th>
+                            </tr>
+                        </thead>
+                        <tbody id="audit-tbody">
+                            <tr class="placeholder-row"><td colspan="5">No changes recorded yet.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- Domain Adaptation & Diagnostics Panel                           -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <section class="panel sensitivity-panel" id="adaptation-panel">
+        <div class="panel-header sensitivity-header" onclick="toggleAdaptationPanel()">
+            <h2 class="panel-title">🛠 Domain Adaptation & Diagnostics</h2>
+            <span id="adaptation-toggle-icon" class="toggle-icon">▼</span>
+        </div>
+        <div id="adaptation-content" class="sensitivity-content hidden">
+            
+            <div class="sensitivity-grid">
+                <!-- Column 1: Domain Shift Monitor -->
+                <div class="sensitivity-col">
+                    <h3>Domain Shift Monitor</h3>
+                    <p class="help-text">Passive monitor checking feature value bounds.</p>
+                    <div id="domain-shift-list" class="shift-list">
+                        <div class="placeholder-text">Waiting for data...</div>
+                    </div>
+                </div>
+
+                <!-- Column 2: Byte-Column Adaptation -->
+                <div class="sensitivity-col">
+                    <h3>Byte-Column Adaptation</h3>
+                    <p class="help-text">Re-fits Yeo-Johnson lambdas on TotBytes, SrcBytes, BytesPerPkt.</p>
+                    
+                    <div id="adapt-status">
+                        Active Scaler: <span id="adapt-active-type">Base</span>
+                    </div>
+
+                    <div id="adapt-idle" class="calib-state mt-2">
+                        <button class="btn btn-secondary" onclick="startAdaptation()">Start Collecting</button>
+                        <button class="btn btn-secondary" onclick="resetAdaptation()" style="margin-left: 10px;">Reset</button>
+                    </div>
+                    
+                    <div id="adapt-active" class="calib-state hidden mt-2">
+                        <div class="calib-banner">
+                            <span class="calib-spinner"></span> Collecting raw flows...
+                        </div>
+                        <div class="calib-stats">Samples: <span id="adapt-samples">0</span> / <span id="adapt-min">50000</span></div>
+                        <button id="adapt-apply-btn" class="btn btn-stop mt-2" onclick="applyAdaptation()" disabled>Apply Adapted Scaler</button>
+                    </div>
+                    
+                    <div id="adapt-result" class="calib-state hidden mt-2">
+                        <h4>Lambda Deltas</h4>
+                        <table class="delta-table">
+                            <thead><tr><th>Col</th><th>Base</th><th>Adapted</th></tr></thead>
+                            <tbody id="adapt-deltas"></tbody>
+                        </table>
+                        <button class="btn btn-secondary mt-2" onclick="dismissAdaptResult()">Dismiss</button>
+                    </div>
+                </div>
+
+                <!-- Column 3: Recalibrate Models -->
+                <div class="sensitivity-col">
+                    <h3>Recalibrate Models</h3>
+                    <p class="help-text">Upload labeled CSV to fit Isotonic layer.</p>
+                    <div id="recal-status">
+                        XGB Fitted: <span id="recal-xgb-status">No</span> | TCN Fitted: <span id="recal-tcn-status">No</span>
+                    </div>
+                    
+                    <div class="mt-2">
+                        <button class="btn btn-secondary" onclick="alert('Offline replay CSV upload not fully implemented.')">Fit Recalibrators (Mock)</button>
+                        <button class="btn btn-secondary" onclick="resetRecalibration()">Reset</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Model Status Sub-panel -->
+            <div class="audit-log-section mt-4">
+                <h3>Model Status</h3>
+                <div class="model-status-grid" id="model-status-grid">
+                    <!-- populated via js -->
+                </div>
+            </div>
+
+        </div>
+    </section>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
