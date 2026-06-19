@@ -1,0 +1,2 @@
+{"ts": "2026-06-19T05:36:38.990865+00:00", "component": "threshold", "model": "xgb", "old": 0.2, "new": 0.20797038793563952, "reason": "manual"}
+{"ts": "2026-06-19T05:36:38.991366+00:00", "component": "threshold", "model": "tcn", "old": 0.022, "new": 0.1, "reason": "manual"}
