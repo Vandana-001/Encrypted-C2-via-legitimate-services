@@ -18,9 +18,20 @@ logger = logging.getLogger(__name__)
 # ── Artifact container ────────────────────────────────────────────────
 
 class ModelArtifacts:
-    """Container for all pre-trained model artifacts."""
+    """Container for the seven pre-trained model artifacts loaded at startup.
+
+    Attributes:
+        clip_bounds (dict): Columns clipping bounds.
+        scaler (sklearn.preprocessing.PowerTransformer): Byte transformer.
+        le_proto (LabelEncoder): Protocol label encoder.
+        le_dir (LabelEncoder): Direction label encoder.
+        xgb_model (xgboost.XGBClassifier): XGBoost classifier.
+        tcn_model (keras.Model): Temporal Convolutional Network.
+        win_scaler (sklearn.preprocessing.StandardScaler): StandardScaler for windows.
+    """
 
     def __init__(self):
+        """Initialize all artifact slots to None."""
         self.clip_bounds = None
         self.scaler      = None
         self.le_proto    = None
@@ -32,6 +43,11 @@ class ModelArtifacts:
 
     @property
     def is_loaded(self):
+        """Check if artifacts are loaded.
+
+        Returns:
+            bool: True if loaded, False otherwise.
+        """
         return self._loaded
 
 
@@ -41,14 +57,25 @@ _artifacts = ModelArtifacts()
 
 
 def get_artifacts() -> ModelArtifacts:
-    """Return the singleton ModelArtifacts instance."""
+    """Retrieve the singleton ModelArtifacts instance.
+
+    Returns:
+        ModelArtifacts: The global artifacts container.
+    """
     return _artifacts
 
 
 def load_artifacts() -> ModelArtifacts:
-    """
-    Load all 7 artifacts from MODEL_DIR.  Raises RuntimeError with a
-    clear message if any file is missing or cannot be loaded.
+    """Load the seven pre-trained artifacts from the model directory.
+
+    Performs check tests, loads joblib pickles, handles custom Keras TCN
+    de-serialization object registers, and runs a dummy forward pass warm-up.
+
+    Returns:
+        ModelArtifacts: The populated artifacts singleton.
+
+    Raises:
+        RuntimeError: If any required file is missing or loader fails.
     """
     import os
     import tensorflow as tf

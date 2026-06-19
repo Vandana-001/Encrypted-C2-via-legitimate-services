@@ -11,36 +11,57 @@ import queue
 
 
 class CaptureEngine(abc.ABC):
-    """Abstract base class for packet capture engines."""
+    """Abstract base class for packet capture engines.
+
+    Defines the contract for capture loops executing on a network interface.
+    Emitted flows must match the common NIDS flow dictionary schema.
+    """
 
     @abc.abstractmethod
     def start(self, interface: str) -> None:
-        """Start capturing packets on the given interface."""
+        """Start capturing packets on the specified network interface.
+
+        Args:
+            interface: Name of the network interface card (NIC) to capture from.
+
+        Raises:
+            PermissionError: If administrative privileges are missing.
+            ValueError: If the interface is invalid or unavailable.
+        """
         ...
 
     @abc.abstractmethod
     def stop(self) -> None:
-        """Stop the capture cleanly."""
+        """Stop packet capture and clean up active threads or sniffers.
+
+        Ensures resources like raw sockets are closed cleanly.
+        """
         ...
 
     @abc.abstractmethod
     def get_flow_queue(self) -> queue.Queue:
-        """
-        Return the queue from which finished flow dicts can be consumed.
+        """Get the queue containing completed flow dictionaries.
 
-        Each item is a dict with exactly these keys:
-            StartTime, Dur, Proto, SrcAddr, Sport, Dir,
-            DstAddr, Dport, TotPkts, TotBytes, SrcBytes, Label
+        Returns:
+            queue.Queue: Queue where flow records matching the common schema are pushed.
         """
         ...
 
     @abc.abstractmethod
     def is_running(self) -> bool:
-        """Return True if the engine is actively capturing."""
+        """Check if the capture engine is currently active.
+
+        Returns:
+            bool: True if the engine is running and capture is active, False otherwise.
+        """
         ...
 
     @property
     @abc.abstractmethod
     def name(self) -> str:
-        """Human-readable name of the engine (e.g. 'nfstream', 'scapy')."""
+        """Get the name of the capture engine.
+
+        Returns:
+            str: Human-readable identifier of the engine (e.g. 'nfstream' or 'scapy').
+        """
         ...

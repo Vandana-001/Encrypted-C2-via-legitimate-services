@@ -38,19 +38,29 @@ _ip_buffers: dict[str, collections.deque] = {}
 
 
 def reset_tcn_state():
-    """Reset all per-IP rolling buffers (e.g., on capture restart)."""
+    """Reset all per-IP rolling buffers to clear sequence histories.
+
+    Called during capture restarts or status resets.
+    """
     global _ip_buffers
     with _buffer_lock:
         _ip_buffers = {}
 
 
 def scale_within_window(X: np.ndarray, win_scaler, n_base: int, clip: float = 4.0) -> np.ndarray:
-    """
-    Apply the trained within-window RobustScaler to the 7 within-window dims
-    (columns n_base: onward) across all sequences and timesteps, then clip to
-    [-clip, clip]. X shape: (N, seq_len, n_base + 7).
+    """Apply the within-window RobustScaler to the 7 within-window dimensions.
 
-    Exact port of scale_within_window() from notebook Cell 7.
+    Scales columns from index n_base to the end across all sequence steps and
+    clips scaled values between -clip and +clip.
+
+    Args:
+        X (np.ndarray): Unscaled TCN feature matrix of shape (N, SEQ_LEN, 19).
+        win_scaler: Loaded within-window RobustScaler.
+        n_base: Index split where within-window features begin (typically 12).
+        clip: Clipping boundary limit.
+
+    Returns:
+        np.ndarray: Scaled and clipped feature matrix.
     """
     N, L, F  = X.shape
     n_win    = F - n_base
@@ -62,15 +72,25 @@ def scale_within_window(X: np.ndarray, win_scaler, n_base: int, clip: float = 4.
 
 
 def _within_window_features(IATs, TBYTs, FASYMs, DSTs, DPORTs) -> np.ndarray:
-    """
-    Exact replica of notebook Cell 17 inner function.
-    Returns shape (7,).
+    """Compute 7 within-window behavioral features for a sequence window.
 
-    Computes:
-      w_iat_mean, w_iat_std, w_beacon (beacon_regularity),
-      w_pay_cv (payload_size_cv),
-      w_fasym_mean (flow_asymmetry_mean),
-      w_dst_fanout, w_dport_ent (dport_entropy)
+    Metrics calculated:
+      - Inter-Arrival Time (IAT) mean and standard deviation.
+      - Beacon regularity coefficient of variation.
+      - Payload bytes coefficient of variation.
+      - Flow asymmetry average.
+      - Destination IP fanout uniqueness.
+      - Destination port entropy.
+
+    Args:
+        IATs: Sequence of Inter-Arrival Times.
+        TBYTs: Sequence of raw total byte counts.
+        FASYMs: Sequence of flow asymmetry values.
+        DSTs: Sequence of destination addresses.
+        DPORTs: Sequence of destination ports.
+
+    Returns:
+        np.ndarray: Computed array of 7 window features of shape (7,).
     """
     eps = EPSILON
 
@@ -105,33 +125,20 @@ def _within_window_features(IATs, TBYTs, FASYMs, DSTs, DPORTs) -> np.ndarray:
 
 
 def process_flow_for_tcn(row_data: dict, tcn_model, win_scaler, threshold: float) -> dict | None:
-    """
-    Process a single finished flow through the TCN rolling-buffer pipeline.
+    """Process a single completed traffic flow through the TCN rolling sequence buffer.
 
-    Parameters
-    ----------
-    row_data : dict
-        Must contain keys:
-        - 'SrcAddr': str
-        - 'DstAddr': str
-        - 'Dport': value (port)
-        - 'features': np.ndarray of shape (12,) — scaled ALL_FEATURES values
-        - 'IAT_raw': float
-        - 'TotBytes_raw': float — unscaled TotBytes
-        - 'flow_asymmetry': float
-    tcn_model : keras Model
-        Loaded TCN model expecting input shape (batch, SEQ_LEN, 19).
-    win_scaler : RobustScaler
-        Loaded within-window scaler expecting 7 features.
-    threshold : float
-        The live decision threshold.
+    Performs cyclic sequence padding, windows feature aggregation, within-window scaling,
+    runs a raw forward pass through the keras model, applies isotonic recalibration, and
+    flags anomalous alerts.
 
-    Returns
-    -------
-    dict or None
-        If a TCN prediction was made:
-            {'SrcAddr': str, 'tcn_prob': float, 'tcn_prob_recal': float, 'tcn_alert': int}
-        If not enough history (< MIN_SEQ flows for this IP): None
+    Args:
+        row_data: Flow metrics dictionary with keys 'SrcAddr', 'features', 'IAT_raw', etc.
+        tcn_model: Loaded TCN model instance.
+        win_scaler: Loaded within-window RobustScaler.
+        threshold: Threshold float boundary.
+
+    Returns:
+        dict | None: Dictionary of results if sequence length >= MIN_SEQ; None otherwise.
     """
     src_addr = str(row_data["SrcAddr"])
 

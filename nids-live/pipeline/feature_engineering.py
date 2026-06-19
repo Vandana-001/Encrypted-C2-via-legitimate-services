@@ -29,14 +29,32 @@ _last_epoch_by_src: dict[str, float] = {}
 
 
 def reset_iat_state():
-    """Reset the IAT tracking state (e.g., on capture restart)."""
+    """Reset the IAT tracking state dictionary.
+
+    Called during capture restarts to purge any previous connection timestamps.
+    """
     global _last_epoch_by_src
     with _iat_lock:
         _last_epoch_by_src = {}
 
 
 def _categorize_port(p) -> int:
-    """Map raw port to the 6-category encoding used in training."""
+    """Categorize port numbers into one of six pre-defined categories.
+
+    Categories:
+        0: Well-known system ports (0 - 1023)
+        1: Registered ports (1024 - 49151)
+        2: Ephemeral dynamic ports (49152 - 65535)
+        3: Unparseable ports
+        4: Common HTTP/HTTPS ports (80, 443)
+        5: DNS port (53)
+
+    Args:
+        p: Raw port representation (string, float, or int).
+
+    Returns:
+        int: Categorization class (0 to 5).
+    """
     try:
         p = int(float(str(p).strip()))
         if p in (443, 80):
@@ -53,14 +71,20 @@ def _categorize_port(p) -> int:
 
 
 def engineer_features(df, clip_bounds, le_proto, le_dir):
-    """
-    Apply all feature engineering steps from training Cell 6 / inference Cell 4.
-    Returns a DataFrame with ALL_FEATURES + helper columns
-    (IAT_raw, flow_asymmetry, StartTime_epoch, TotBytes_raw, DstAddr, Dport
-    kept for downstream TCN use).
+    """Apply feature engineering transformations to raw flow records.
 
-    This is a direct, unmodified port of the notebook's logic except for
-    the streaming IAT adaptation described below.
+    Calculates behavior ratios, clips numeric values, encodes protocols/direction,
+    assigns port classes, calculates Inter-Arrival Times (IAT), and computes flow
+    asymmetry metrics.
+
+    Args:
+        df (pd.DataFrame): Dataframe of raw completed flows.
+        clip_bounds (dict): Column clipping limits loaded from training.
+        le_proto (LabelEncoder): LabelEncoder for protocols.
+        le_dir (LabelEncoder): LabelEncoder for flow directions.
+
+    Returns:
+        pd.DataFrame: Transformed dataframe ready for scaling and inference.
     """
     df = df.copy()
 

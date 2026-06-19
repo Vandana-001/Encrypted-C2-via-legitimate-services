@@ -13,21 +13,17 @@ from config import ALL_FEATURES
 from pipeline.active_scaler import get_active_scaler
 
 def scale_features(df_feat):
-    """
-    Exact port of notebook Cell 5 / Cell 12.
+    """Transform continuous feature columns using the active PowerTransformer.
 
-    Parameters
-    ----------
-    df_feat : pd.DataFrame
-        Output of engineer_features(), containing ALL_FEATURES columns.
-    scaler : sklearn.preprocessing.PowerTransformer
-        Fitted PowerTransformer from training.  NEVER re-fit.
+    Applies the Yeo-Johnson transform to the 12 base ALL_FEATURES columns and
+    clips output values strictly to the [-4.0, 4.0] interval, preserving raw
+    TotBytes for downstream TCN coefficient of variation calculations.
 
-    Returns
-    -------
-    pd.DataFrame
-        Copy of df_feat with ALL_FEATURES columns scaled and clipped to [-4, 4],
-        plus a TotBytes_raw column preserving the unscaled TotBytes for TCN.
+    Args:
+        df_feat (pd.DataFrame): Dataframe containing base engineered features.
+
+    Returns:
+        pd.DataFrame: Dataframe with scaled and clipped columns, plus 'TotBytes_raw'.
     """
     scaler = get_active_scaler()
     X = df_feat[ALL_FEATURES].values.astype(np.float32)

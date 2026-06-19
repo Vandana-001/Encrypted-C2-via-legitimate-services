@@ -63,13 +63,22 @@ except Exception as exc:
 
 @app.route("/")
 def index():
-    """Render the main dashboard page."""
+    """Render the main dashboard page.
+
+    Returns:
+        Response: The rendered HTML content of index.html.
+    """
     return render_template("index.html")
 
 
 @app.route("/api/interfaces", methods=["GET"])
 def api_interfaces():
-    """Return list of available network interfaces."""
+    """Return list of available network interfaces on the host system.
+
+    Returns:
+        Response: JSON payload containing list of network interface names,
+            or an error message on failure.
+    """
     try:
         interfaces = list_interfaces()
         return jsonify({"interfaces": interfaces})
@@ -79,7 +88,12 @@ def api_interfaces():
 
 @app.route("/api/start", methods=["POST"])
 def api_start():
-    """Start packet capture and the inference pipeline."""
+    """Start packet capture and the inference pipeline on a given interface.
+
+    Returns:
+        Response: JSON status ("running") and engine name on success,
+            or an error message with appropriate HTTP status code on failure.
+    """
     global orchestrator
 
     # Check for model load errors
@@ -129,7 +143,12 @@ def api_start():
 
 @app.route("/api/stop", methods=["POST"])
 def api_stop():
-    """Stop packet capture and the inference pipeline."""
+    """Stop packet capture and the inference pipeline.
+
+    Returns:
+        Response: JSON status ("stopped") on success,
+            or an error message with HTTP 500 on failure.
+    """
     global orchestrator
 
     if orchestrator is None:
@@ -148,7 +167,11 @@ def api_stop():
 
 @app.route("/api/status", methods=["GET"])
 def api_status():
-    """Return current pipeline status and counters."""
+    """Return current pipeline status, engine type, uptime, and classification counters.
+
+    Returns:
+        Response: JSON payload representing active state variables and statistics.
+    """
     status_data = state.get_status()
 
     # Include model load error if present
@@ -163,7 +186,14 @@ def api_status():
 
 @app.route("/api/flows", methods=["GET"])
 def api_flows():
-    """Return most recent flow inference results."""
+    """Return the most recent flow classification records.
+
+    Query Params:
+        limit (int): Maximum records to retrieve. Default is 50.
+
+    Returns:
+        Response: JSON payload list of recent flows.
+    """
     limit = request.args.get("limit", 50, type=int)
     flows = state.get_recent_flows(limit)
     return jsonify({"flows": flows})
@@ -171,7 +201,14 @@ def api_flows():
 
 @app.route("/api/alerts", methods=["GET"])
 def api_alerts():
-    """Return most recent alert-only entries."""
+    """Return the most recent classification records flagged as an anomaly by either model.
+
+    Query Params:
+        limit (int): Maximum records to retrieve. Default is 50.
+
+    Returns:
+        Response: JSON payload list of alert flows.
+    """
     limit = request.args.get("limit", 50, type=int)
     alerts = state.get_alerts(limit)
     return jsonify({"alerts": alerts})
@@ -179,7 +216,14 @@ def api_alerts():
 
 @app.route("/api/top_ips", methods=["GET"])
 def api_top_ips():
-    """Return top suspicious source IPs sorted by max probability."""
+    """Return the top source IPs sorted in descending order by maximum anomaly probability.
+
+    Query Params:
+        limit (int): Maximum records to retrieve. Default is 10.
+
+    Returns:
+        Response: JSON payload list of suspicious source IPs.
+    """
     limit = request.args.get("limit", 10, type=int)
     top_ips = state.get_top_ips(limit)
     return jsonify({"top_ips": top_ips})
@@ -191,7 +235,11 @@ def api_top_ips():
 
 @app.route("/api/thresholds", methods=["GET"])
 def api_get_thresholds():
-    """Get current thresholds, defaults, bounds, and auto-tune status."""
+    """Get active thresholds, defaults, bounds, and auto-tune state.
+
+    Returns:
+        Response: JSON payload containing current thresholds, bounds, and auto-tuning configuration.
+    """
     manager = get_manager()
     auto_tuner = get_auto_tuner()
     current = manager.get()
@@ -210,7 +258,11 @@ def api_get_thresholds():
 
 @app.route("/api/thresholds", methods=["POST"])
 def api_set_thresholds():
-    """Manually update thresholds."""
+    """Manually update the decision thresholds.
+
+    Returns:
+        Response: JSON payload containing the updated threshold settings.
+    """
     data = request.get_json(silent=True) or {}
     xgb = data.get("xgb_threshold")
     tcn = data.get("tcn_threshold")
@@ -221,14 +273,22 @@ def api_set_thresholds():
 
 @app.route("/api/thresholds/reset", methods=["POST"])
 def api_reset_thresholds():
-    """Reset thresholds to startup defaults."""
+    """Reset decision thresholds to training defaults.
+
+    Returns:
+        Response: JSON payload containing the reset threshold settings.
+    """
     manager = get_manager()
     manager.reset()
     return jsonify(manager.get())
 
 @app.route("/api/auto_tune", methods=["POST"])
 def api_set_auto_tune():
-    """Enable or disable bounded auto-tuning."""
+    """Enable or disable passive background auto-tuning.
+
+    Returns:
+        Response: JSON status flag confirming the auto-tune toggle state.
+    """
     data = request.get_json(silent=True) or {}
     enabled = bool(data.get("enabled", False))
     get_auto_tuner().set_enabled(enabled)
@@ -236,13 +296,24 @@ def api_set_auto_tune():
 
 @app.route("/api/calibration/start", methods=["POST"])
 def api_calibration_start():
-    """Start guided calibration recording."""
+    """Start Guided Calibration recording for threshold baselining.
+
+    Returns:
+        Response: JSON payload confirming active calibration status.
+    """
     assistant = get_calibration_assistant()
     return jsonify(assistant.start())
 
 @app.route("/api/calibration/stop", methods=["POST"])
 def api_calibration_stop():
-    """Stop guided calibration and return suggestions."""
+    """Stop Guided Calibration and compute suggested threshold values.
+
+    Query Params:
+        percentile (float): Target percentile to select from ECDF. Default is 99.5.
+
+    Returns:
+        Response: JSON suggestions dictionary containing suggested, current, and raw threshold details.
+    """
     percentile = request.args.get("percentile", config.CALIBRATION_DEFAULT_PERCENTILE, type=float)
     assistant = get_calibration_assistant()
     current_thresholds = get_manager().get()
@@ -251,7 +322,14 @@ def api_calibration_stop():
 
 @app.route("/api/threshold_audit", methods=["GET"])
 def api_threshold_audit():
-    """Return recent threshold changes from the audit log."""
+    """Retrieve recent threshold adjustment logs.
+
+    Query Params:
+        limit (int): Maximum records to retrieve. Default is 50.
+
+    Returns:
+        Response: JSON list of recent audit log entries.
+    """
     import json
     limit = request.args.get("limit", 50, type=int)
     audit_path = os.path.join(config.BASE_DIR, "logs", "threshold_audit.jsonl")
@@ -282,6 +360,11 @@ def api_threshold_audit():
 
 @app.route("/api/scaler_status", methods=["GET"])
 def api_scaler_status():
+    """Get active scaling transformer type and byte-column power lambdas.
+
+    Returns:
+        Response: JSON payload containing active status, lambdas, and buffer sizes.
+    """
     scaler = get_active_scaler()
     adapted_path = os.path.join(config.MODEL_DIR, "scaler_adapted.pkl")
     is_adapted = os.path.exists(adapted_path)
@@ -303,12 +386,22 @@ def api_scaler_status():
 
 @app.route("/api/scaler_adaptation/start", methods=["POST"])
 def api_scaler_start():
+    """Start passive byte feature adaptation buffer collection.
+
+    Returns:
+        Response: JSON state flag confirming the active collection.
+    """
     buf = get_adaptation_buffer()
     buf.start()
     return jsonify({"collecting": True})
 
 @app.route("/api/scaler_adaptation/preview", methods=["GET"])
 def api_scaler_preview():
+    """Get status check of the byte feature adaptation buffer.
+
+    Returns:
+        Response: JSON containing sample count and readiness flags.
+    """
     buf = get_adaptation_buffer()
     from pipeline.scaler_adaptation import MIN_SAMPLES_FOR_ADAPTATION
     count = buf.sample_count()
@@ -320,6 +413,12 @@ def api_scaler_preview():
 
 @app.route("/api/scaler_adaptation/apply", methods=["POST"])
 def api_scaler_apply():
+    """Compute and apply adapted PowerTransformer using collected byte features.
+
+    Returns:
+        Response: JSON delta calculations comparing base to adapted lambdas on success,
+            or an error message on failure.
+    """
     buf = get_adaptation_buffer()
     try:
         from pipeline.model_loader import get_artifacts
@@ -347,6 +446,11 @@ def api_scaler_apply():
 
 @app.route("/api/scaler_adaptation/reset", methods=["POST"])
 def api_scaler_reset():
+    """Remove adapted PowerTransformer and restore the base model scaler.
+
+    Returns:
+        Response: JSON status flag confirming the reset execution.
+    """
     from pipeline.model_loader import get_artifacts
     base_scaler = get_artifacts().scaler
     reset_active_scaler(base_scaler)
@@ -360,6 +464,11 @@ def api_scaler_reset():
 
 @app.route("/api/recalibration/status", methods=["GET"])
 def api_recal_status():
+    """Get active states of the XGBoost and TCN probability recalibrators.
+
+    Returns:
+        Response: JSON payload showing fitted status.
+    """
     r = get_recalibrator()
     status = r.get_status()
     return jsonify({
@@ -369,6 +478,15 @@ def api_recal_status():
 
 @app.route("/api/recalibration/fit", methods=["POST"])
 def api_recal_fit():
+    """Run model recalibration fitting from uploaded labeled CSV records.
+
+    Note:
+        This endpoint is currently mocked (returns 501) as it depends on an external
+        offline replay parser.
+
+    Returns:
+        Response: JSON error status and error message.
+    """
     # This would parse CSV and fit. Since it involves pipeline offline replay
     # and the prompt specifies "The endpoint runs the existing offline-replay pipeline",
     # I will mock the CSV parsing to demonstrate the endpoint exists and returns ok.
@@ -380,6 +498,11 @@ def api_recal_fit():
 
 @app.route("/api/recalibration/reset", methods=["POST"])
 def api_recal_reset():
+    """Reset and delete fitted isotonic recalibrators.
+
+    Returns:
+        Response: JSON status flag confirming the reset execution.
+    """
     r = get_recalibrator()
     r.reset()
     get_manager().audit_event("recalibration", "reset")
@@ -387,6 +510,11 @@ def api_recal_reset():
 
 @app.route("/api/recalibration/feature_aucs", methods=["GET"])
 def api_recal_aucs():
+    """Get the feature importance coefficients computed during recalibrator fitting.
+
+    Returns:
+        Response: JSON arrays representing weights assigned to XGBoost and TCN.
+    """
     r = get_recalibrator()
     xgb_w = r.xgb_weights.tolist() if r.xgb_weights is not None else []
     tcn_w = r.tcn_weights.tolist() if r.tcn_weights is not None else []
@@ -398,6 +526,11 @@ def api_recal_aucs():
 
 @app.route("/api/domain_shift", methods=["GET"])
 def api_domain_shift():
+    """Evaluate boundaries of numeric features to flag potential domain distribution shift.
+
+    Returns:
+        Response: JSON payload detailing features status and domain shift warning flags.
+    """
     from config import CLIP_BOUNDARY_WARN_THRESHOLD, CLIP_BOUNDARY_WATCH_THRESHOLD
     stats = state.clip_boundary_stats
     

@@ -32,14 +32,20 @@ logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
-    """
-    Pipeline orchestrator.
+    """Orchestrator class tying together flow ingestion, inference, and UI state reporting.
 
-    Pulls finished-flow dicts off the capture engine's queue,
-    runs the full inference pipeline, and writes results into PipelineState.
+    Pulls completed traffic flow records from the capture engine, directs them
+    through the feature engineering, scaling, and model prediction steps, and updates
+    the shared thread-safe PipelineState.
     """
 
     def __init__(self, state: PipelineState, artifacts: ModelArtifacts):
+        """Initialize the Orchestrator with references to shared state and models.
+
+        Args:
+            state (PipelineState): Thread-safe container for dashboard metrics.
+            artifacts (ModelArtifacts): Container containing pre-loaded neural and tree models.
+        """
         self.state = state
         self.artifacts = artifacts
         self._engine: CaptureEngine | None = None
@@ -49,7 +55,14 @@ class Orchestrator:
         self._last_domain_shift_time = time.time()
 
     def start(self, engine: CaptureEngine, interface: str):
-        """Start capture and the orchestrator background thread."""
+        """Start the background orchestrator loop and the sniffer engine.
+
+        Clears historical sequence and IAT trackers before starting.
+
+        Args:
+            engine (CaptureEngine): Target packet sniffing engine.
+            interface: Interface name to listen on.
+        """
         # Reset all state for a new session
         self.state.reset()
         reset_iat_state()
@@ -76,7 +89,7 @@ class Orchestrator:
         logger.info("Orchestrator started (engine=%s, interface=%s)", engine.name, interface)
 
     def stop(self):
-        """Stop capture and the orchestrator background thread."""
+        """Signal the orchestrator loop to stop and wait for threads to join."""
         self._stop_event.set()
 
         if self._engine is not None:
@@ -94,6 +107,11 @@ class Orchestrator:
         logger.info("Orchestrator stopped.")
 
     def is_running(self) -> bool:
+        """Check if the orchestrator thread is active and capture is running.
+
+        Returns:
+            bool: True if active, False otherwise.
+        """
         return (
             self._engine is not None
             and self._engine.is_running()
@@ -101,7 +119,10 @@ class Orchestrator:
         )
 
     def _run_loop(self):
-        """Main pipeline loop running in a background thread."""
+        """Worker thread loop continuously reading completed flows from the engine queue.
+
+        Groups incoming completed flows into mini-batches for feature translation.
+        """
         flow_queue = self._engine.get_flow_queue()
         batch_buffer = []
         batch_timeout = 0.5  # collect flows for up to 0.5s before processing
@@ -145,11 +166,10 @@ class Orchestrator:
                 time.sleep(1)
 
     def _process_batch(self, flows: list[dict]):
-        """
-        Process a batch of finished flows through the full inference pipeline.
+        """Direct a batch of flows through the complete feature and model inference sequence.
 
-        Pipeline: engineer_features → scale_features → run_xgb_inference
-                  → TCN buffer update + conditional inference → PipelineState
+        Args:
+            flows: List of raw completed flow records.
         """
         if not flows:
             return
@@ -254,6 +274,11 @@ class Orchestrator:
         self._update_domain_shift_diagnostic(df_scaled)
 
     def _update_domain_shift_diagnostic(self, df_scaled: pd.DataFrame):
+        """Update domain-shift metrics indicating ratio of values near clipping bounds.
+
+        Args:
+            df_scaled: Scaled features dataframe.
+        """
         import time
         from config import DOMAIN_SHIFT_DIAGNOSTIC_INTERVAL_SEC, DOMAIN_SHIFT_WINDOW_ROWS, ALL_FEATURES
         

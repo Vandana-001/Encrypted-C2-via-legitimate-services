@@ -20,15 +20,15 @@ logger = logging.getLogger(__name__)
 
 
 class NFStreamEngine(CaptureEngine):
-    """
-    Primary capture engine for Linux/macOS.
-    Runs nfstream in a daemon *thread* (not a process) so it can be
-    spawned from inside Flask's threaded server without hitting the
-    'daemonic processes are not allowed to have children' restriction.
-    The public API is identical to the old version so orchestrator.py is unchanged.
+    """Primary capture engine for Linux and macOS.
+
+    Runs nfstream in a background daemon thread rather than a process to comply
+    with Flask daemon restrictions. Reconstructs network flows and maps them
+    to the common flow schema.
     """
 
     def __init__(self):
+        """Initialize the NFStream capture engine and state variables."""
         self._thread      = None
         self._queue       = queue.Queue(maxsize=10_000)
         self._stop_event  = threading.Event()
@@ -36,18 +36,40 @@ class NFStreamEngine(CaptureEngine):
 
     @property
     def name(self) -> str:
+        """Get the name identifier of this capture engine.
+
+        Returns:
+            str: "nfstream"
+        """
         return "nfstream"
 
     def get_flow_queue(self) -> queue.Queue:
+        """Get the queue where reconstructed flows are appended.
+
+        Returns:
+            queue.Queue: Thread-safe queue containing flow dictionaries.
+        """
         return self._queue
 
     def is_running(self) -> bool:
+        """Check if the nfstream background capture thread is currently running.
+
+        Returns:
+            bool: True if thread is active, False otherwise.
+        """
         return self._running and self._thread is not None and self._thread.is_alive()
 
     # ── Public interface ──────────────────────────────────────────────
 
     def start(self, interface: str):
-        """Start capturing on *interface* in a background daemon thread."""
+        """Start capturing packets on a network interface in a background daemon thread.
+
+        Drains any stale flows remaining in the queue from previous captures before
+        spinning up the sniffing loop.
+
+        Args:
+            interface: Name of the interface to sniff from.
+        """
         self._stop_event.clear()
         # Drain any leftover items from a previous run
         while not self._queue.empty():
@@ -67,7 +89,7 @@ class NFStreamEngine(CaptureEngine):
         logger.info("NFStreamEngine started on interface: %s", interface)
 
     def stop(self):
-        """Signal the capture loop to stop and wait for the thread to exit."""
+        """Signal the capture loop to stop and wait for the sniffing thread to terminate."""
         self._running = False
         self._stop_event.set()
         if self._thread and self._thread.is_alive():
@@ -78,6 +100,11 @@ class NFStreamEngine(CaptureEngine):
     # ── Internal capture loop (runs in background thread) ─────────────
 
     def _capture_loop(self, interface: str):
+        """Internal worker method running the nfstream sniffer loop.
+
+        Args:
+            interface: Name of the network interface.
+        """
         try:
             from nfstream import NFStreamer
 

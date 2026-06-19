@@ -24,9 +24,14 @@ logger = logging.getLogger(__name__)
 
 
 class ScapyEngine(CaptureEngine):
-    """Scapy-based capture engine using AsyncSniffer + manual flow table."""
+    """Scapy-based capture engine using AsyncSniffer and a manual flow table.
+
+    Tracks individual packets and groups them into flow structures using a
+    hash-based flow table. Periodically expires idle or long-running flows.
+    """
 
     def __init__(self):
+        """Initialize the Scapy sniffer engine and flow tracking components."""
         self._flow_queue: queue.Queue = queue.Queue()
         self._flow_table: dict = {}
         self._flow_lock = threading.Lock()
@@ -37,15 +42,41 @@ class ScapyEngine(CaptureEngine):
 
     @property
     def name(self) -> str:
+        """Get the name identifier of this capture engine.
+
+        Returns:
+            str: "scapy"
+        """
         return "scapy"
 
     def get_flow_queue(self) -> queue.Queue:
+        """Get the queue where completed flows are appended.
+
+        Returns:
+            queue.Queue: Queue container for flow records.
+        """
         return self._flow_queue
 
     def is_running(self) -> bool:
+        """Check if the Scapy packet sniffer is currently active.
+
+        Returns:
+            bool: True if sniff loop is running, False otherwise.
+        """
         return self._running
 
     def start(self, interface: str) -> None:
+        """Start capturing packets on the network interface.
+
+        Spins up the Scapy AsyncSniffer and schedules the periodic flow expiry loop.
+
+        Args:
+            interface: Name of the interface to sniff on.
+
+        Raises:
+            PermissionError: If administrative privileges are missing.
+            RuntimeError: If packet sniffer initialization fails.
+        """
         from scapy.all import AsyncSniffer
 
         self._stop_event.clear()
@@ -76,6 +107,7 @@ class ScapyEngine(CaptureEngine):
         logger.info("ScapyEngine started on interface '%s'", interface)
 
     def stop(self) -> None:
+        """Stop capturing packets, cancel timers, and flush remaining flows."""
         self._stop_event.set()
         self._running = False
 
@@ -91,7 +123,13 @@ class ScapyEngine(CaptureEngine):
         logger.info("ScapyEngine stopped.")
 
     def _packet_callback(self, pkt):
-        """Called for each captured packet by AsyncSniffer."""
+        """Callback function executed for every captured packet.
+
+        Extracts headers, updates the flow table tracking state.
+
+        Args:
+            pkt: Scapy packet object.
+        """
         from scapy.all import IP, TCP, UDP, ICMP
 
         if IP not in pkt:
@@ -138,7 +176,7 @@ class ScapyEngine(CaptureEngine):
                 }
 
     def _schedule_expiry(self):
-        """Schedule the next expiry check in 1 second."""
+        """Schedule the next flow expiry check thread."""
         if self._stop_event.is_set():
             return
         self._expiry_timer = threading.Timer(1.0, self._run_expiry)
@@ -146,16 +184,15 @@ class ScapyEngine(CaptureEngine):
         self._expiry_timer.start()
 
     def _run_expiry(self):
-        """Run one round of flow expiry, then reschedule."""
+        """Worker thread entry point to run flow checks and reschedule."""
         self._expire_flows(force_all=False)
         self._schedule_expiry()
 
     def _expire_flows(self, force_all: bool = False):
-        """
-        Scan the flow table and expire entries where:
-          - now - last_ts > IDLE_TIMEOUT_SEC, OR
-          - last_ts - first_ts > ACTIVE_TIMEOUT_SEC
-        If force_all is True, expire everything (used on stop).
+        """Evaluate flow durations and idle times to move expired flows to emission queue.
+
+        Args:
+            force_all: If True, expires all current tracking flows immediately.
         """
         now = time.time()
         to_emit = []

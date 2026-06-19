@@ -21,32 +21,44 @@ ADAPTATION_SAMPLE_CAP      = 200_000  # cap to match notebook's sample(min(200_0
 _adapt_lock = threading.Lock()
 
 class ScalerAdaptationBuffer:
-    """
-    Collects raw (pre-scaling) byte column values from live traffic.
-    When enough samples are available, fits new lambdas for the three
-    byte columns and returns an adapted copy of the base scaler.
-    Does NOT modify the base scaler in-place.
+    """Collects raw byte column values from live traffic.
+
+    When enough samples are collected, fits new Yeo-Johnson lambdas for the three
+    byte columns (TotBytes, SrcBytes, BytesPerPkt) and returns an adapted copy of
+    the baseline scaler without in-place modification.
     """
 
     def __init__(self):
+        """Initialize the adaptation buffer dictionary and inactive status."""
         self._buf = {col: [] for col in BYTE_COLS}
         self._active = False
 
     def start(self):
+        """Start collecting raw byte-column traffic values in the buffer."""
         with _adapt_lock:
             self._buf = {col: [] for col in BYTE_COLS}
             self._active = True
 
     def stop(self):
+        """Stop buffer collection."""
         with _adapt_lock:
             self._active = False
 
     def is_active(self):
+        """Check if buffer collection is currently enabled.
+
+        Returns:
+            bool: True if active, False otherwise.
+        """
         with _adapt_lock:
             return self._active
 
     def add(self, row_dict: dict):
-        """Call with a raw (pre-feature-engineering) flow dict for every new flow."""
+        """Append byte metrics from a new flow record into the buffer.
+
+        Args:
+            row_dict: Dictionary containing raw flow metrics.
+        """
         if not self._active:
             return
         with _adapt_lock:
@@ -59,15 +71,29 @@ class ScalerAdaptationBuffer:
                         pass
 
     def sample_count(self) -> int:
+        """Get the current sample size in the buffer.
+
+        Returns:
+            int: The minimum count of collected values across the three columns.
+        """
         with _adapt_lock:
             return min(len(self._buf[c]) for c in BYTE_COLS)
 
     def compute_adapted_scaler(self, base_scaler):
-        """
-        Exact port of notebook Cell 5a.
-        Returns (adapted_scaler, lambda_deltas_dict) or raises ValueError if
-        fewer than MIN_SAMPLES_FOR_ADAPTATION samples have been collected.
-        Does NOT modify base_scaler.
+        """Fit Yeo-Johnson lambdas on the collected samples and return an adapted copy of base_scaler.
+
+        Surgically overrides lambdas, means, variances, and scale attributes for
+        only the three byte columns while leaving other columns unchanged.
+
+        Args:
+            base_scaler (sklearn.preprocessing.PowerTransformer): The base scaler to copy.
+
+        Returns:
+            tuple[sklearn.preprocessing.PowerTransformer, dict]:
+                The adapted PowerTransformer instance, and a dictionary of original/adapted lambdas.
+
+        Raises:
+            ValueError: If the buffer contains fewer than MIN_SAMPLES_FOR_ADAPTATION samples.
         """
         with _adapt_lock:
             n = self.sample_count()
@@ -124,6 +150,7 @@ class ScalerAdaptationBuffer:
         return adapted, lambda_deltas
 
     def clear(self):
+        """Discard all buffer contents and mark collection as inactive."""
         with _adapt_lock:
             self._buf = {col: [] for col in BYTE_COLS}
             self._active = False
@@ -132,4 +159,9 @@ class ScalerAdaptationBuffer:
 _buffer = ScalerAdaptationBuffer()
 
 def get_adaptation_buffer() -> ScalerAdaptationBuffer:
+    """Retrieve the singleton ScalerAdaptationBuffer instance.
+
+    Returns:
+        ScalerAdaptationBuffer: The global adaptation buffer instance.
+    """
     return _buffer

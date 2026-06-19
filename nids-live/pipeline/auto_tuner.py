@@ -18,23 +18,46 @@ from pipeline.threshold_manager import get_manager, clip
 logger = logging.getLogger(__name__)
 
 class ScoreEvent:
+    """Represents a single model anomaly score observation.
+
+    Attributes:
+        ts (float): Epoch timestamp when the observation occurred.
+        prob (float): Anomaly score/probability value.
+        was_alert (bool): Whether the score exceeded the active threshold and triggered an alert.
+    """
     __slots__ = ['ts', 'prob', 'was_alert']
-    def __init__(self, ts, prob, was_alert):
+    def __init__(self, ts: float, prob: float, was_alert: bool):
+        """Initialize the ScoreEvent record."""
         self.ts = ts
         self.prob = prob
         self.was_alert = was_alert
 
 class ScoreHistory:
-    """Maintains a trailing window of score events."""
+    """Thread-safe sliding buffer maintaining a history of ScoreEvents."""
     def __init__(self):
+        """Initialize the queue collection and lock helper."""
         self.events = collections.deque()
         self._lock = threading.Lock()
         
     def add(self, prob: float, was_alert: bool):
+        """Record a new anomaly score event into the history.
+
+        Args:
+            prob: Anomaly score value.
+            was_alert: True if the score triggered a system alert.
+        """
         with self._lock:
             self.events.append(ScoreEvent(time.time(), prob, was_alert))
             
     def trailing(self, window_sec: float) -> list[ScoreEvent]:
+        """Evict stale logs and return events falling within the trailing duration window.
+
+        Args:
+            window_sec: Duration in seconds to look back (e.g. 1800).
+
+        Returns:
+            list[ScoreEvent]: A list of qualifying history events.
+        """
         now = time.time()
         cutoff = now - window_sec
         with self._lock:
@@ -45,7 +68,13 @@ class ScoreHistory:
 
 
 class AutoTuner:
+    """Coordinates the passive auto-tuning background worker loop.
+
+    Monitors incoming traffic scores, builds baseline percentiles over trailing windows,
+    and increments/decrements model thresholds incrementally.
+    """
     def __init__(self):
+        """Initialize the AutoTuner trackers and start the background thread."""
         self._lock = threading.Lock()
         self.enabled = config.AUTO_TUNE_ENABLED_DEFAULT
         self.score_history = {
@@ -59,16 +88,33 @@ class AutoTuner:
         self._start_thread()
 
     def set_enabled(self, enabled: bool):
+        """Enable or disable the auto-tuning worker.
+
+        Args:
+            enabled: If True, auto-tuning is activated.
+        """
         with self._lock:
             self.enabled = enabled
             logger.info("Auto-tune enabled state changed to: %s", enabled)
 
     def is_enabled(self) -> bool:
+        """Check if the auto-tuner is active.
+
+        Returns:
+            bool: True if auto-tuning is enabled, False otherwise.
+        """
         with self._lock:
             return self.enabled
 
     def add_score(self, xgb_prob: float, xgb_alert: bool, tcn_prob: float, tcn_alert: bool):
-        """Called by orchestrator on every flow."""
+        """Register newly generated model scores to the history queues.
+
+        Args:
+            xgb_prob: Anomaly score from the XGBoost model.
+            xgb_alert: Trigger status of the XGBoost model.
+            tcn_prob: Anomaly score from the TCN model.
+            tcn_alert: Trigger status of the TCN model.
+        """
         # Only bother recording if enabled
         if not self.is_enabled():
             return
@@ -76,6 +122,7 @@ class AutoTuner:
         self.score_history["tcn"].add(tcn_prob, tcn_alert)
 
     def _start_thread(self):
+        """Spin up the daemon worker thread."""
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
 
@@ -95,7 +142,7 @@ class AutoTuner:
                 logger.error("Error in auto-tune cycle: %s", exc)
 
     def _auto_tune_cycle(self):
-        """Evaluate and apply bounds-checked threshold updates."""
+        """Execute one evaluation check and apply bounded threshold increments."""
         threshold_mgr = get_manager()
         current_thresholds = threshold_mgr.get()
         
@@ -141,4 +188,9 @@ class AutoTuner:
 _auto_tuner = AutoTuner()
 
 def get_auto_tuner() -> AutoTuner:
+    """Retrieve the singleton AutoTuner instance.
+
+    Returns:
+        AutoTuner: The global auto-tuner orchestrator.
+    """
     return _auto_tuner

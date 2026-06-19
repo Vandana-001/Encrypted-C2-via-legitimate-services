@@ -12,9 +12,14 @@ from datetime import datetime, timezone
 
 
 class PipelineState:
-    """Thread-safe container for all live pipeline state."""
+    """Thread-safe container for all live pipeline metrics and alerts.
+
+    Synchronizes concurrently written stats from the sniffer thread and read
+    queries from Flask dashboard threads.
+    """
 
     def __init__(self):
+        """Initialize pipeline counters, deques, summaries, and lock."""
         self._lock = threading.Lock()
 
         # Recent flow inference results for the live table
@@ -38,7 +43,7 @@ class PipelineState:
         self.clip_boundary_stats: dict = {}
 
     def reset(self):
-        """Reset all state for a new capture session."""
+        """Reset all metric counters, flow lists, and timers to startup states."""
         with self._lock:
             self.recent_flows.clear()
             self.alerts.clear()
@@ -53,17 +58,34 @@ class PipelineState:
             self.clip_boundary_stats = {}
 
     def set_status(self, status: str, error: str = ""):
+        """Update system runtime status thread-safely.
+
+        Args:
+            status: Target state ("running", "stopped", "error").
+            error: Descriptive error message if status is "error".
+        """
         with self._lock:
             self.status = status
             if error:
                 self.last_error = error
 
     def set_engine(self, engine_name: str):
+        """Register the currently running capture engine identifier.
+
+        Args:
+            engine_name: The engine name ("nfstream" or "scapy").
+        """
         with self._lock:
             self.active_engine = engine_name
 
     def add_flow_result(self, result: dict):
-        """Add a completed flow inference result."""
+        """Insert a newly processed flow inference result dictionary.
+
+        Updates cumulative metrics and aggregates IP summary records.
+
+        Args:
+            result: Completed flow dictionary with scores and alert flags.
+        """
         with self._lock:
             self.recent_flows.append(result)
             self.total_flows_processed += 1
@@ -112,6 +134,11 @@ class PipelineState:
                     summary["tcn_alert_count"] += 1
 
     def get_status(self) -> dict:
+        """Fetch general pipeline status metrics.
+
+        Returns:
+            dict: Pipeline status summary including status, engine, and metrics.
+        """
         with self._lock:
             uptime = 0.0
             if self.start_time is not None:
@@ -129,16 +156,40 @@ class PipelineState:
             }
 
     def get_recent_flows(self, limit: int = 50) -> list[dict]:
+        """Get list of most recently processed flows.
+
+        Args:
+            limit: Maximum count to return.
+
+        Returns:
+            list[dict]: List of recent flow metrics.
+        """
         with self._lock:
             items = list(self.recent_flows)
             return items[-limit:]
 
     def get_alerts(self, limit: int = 50) -> list[dict]:
+        """Get list of recent alert results.
+
+        Args:
+            limit: Maximum count to return.
+
+        Returns:
+            list[dict]: List of alert dictionaries.
+        """
         with self._lock:
             items = list(self.alerts)
             return items[-limit:]
 
     def get_top_ips(self, limit: int = 10) -> list[dict]:
+        """Get list of source IPs sorted by highest anomaly probability.
+
+        Args:
+            limit: Maximum count to return.
+
+        Returns:
+            list[dict]: Sorted top anomaly source IPs.
+        """
         with self._lock:
             if not self.per_ip_summary:
                 return []

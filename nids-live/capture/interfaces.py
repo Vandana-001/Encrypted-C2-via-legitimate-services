@@ -9,9 +9,12 @@ logger = logging.getLogger(__name__)
 
 
 def list_interfaces() -> list[str]:
-    """
-    List available network interfaces.
+    """List available network interfaces on the host system.
+
     Uses scapy's get_if_list() which works cross-platform via libpcap/Npcap.
+
+    Returns:
+        list[str]: A list of interface names available for capture.
     """
     try:
         from scapy.all import get_if_list
@@ -22,12 +25,13 @@ def list_interfaces() -> list[str]:
 
 
 def select_capture_engine():
-    """
-    Choose the best capture engine for the current platform.
+    """Choose the best capture engine for the current platform.
 
-    Returns the engine CLASS (not an instance).
-    - Linux/macOS with nfstream available → NFStreamEngine
-    - Otherwise (Windows, or nfstream unavailable) → ScapyEngine
+    Checks if running on Linux/macOS and whether nfstream is installed.
+    Otherwise, falls back to the universal ScapyEngine.
+
+    Returns:
+        Type[CaptureEngine]: The class of the chosen capture engine.
     """
     if platform.system() in ("Linux", "Darwin"):
         try:
@@ -44,9 +48,16 @@ def select_capture_engine():
 
 
 def get_engine_by_name(name: str):
-    """
-    Get a capture engine class by name.
-    Supports: 'auto', 'nfstream', 'scapy'.
+    """Retrieve a capture engine class by its name identifier.
+
+    Args:
+        name: Name of the engine ('auto', 'nfstream', or 'scapy').
+
+    Returns:
+        Type[CaptureEngine]: The selected capture engine class.
+
+    Raises:
+        ValueError: If the engine name is unknown.
     """
     if name == "auto":
         return select_capture_engine()

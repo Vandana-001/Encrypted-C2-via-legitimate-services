@@ -16,30 +16,23 @@ from pipeline.recalibration import get_recalibrator
 
 
 def add_xgb_interactions(X, feature_names):
-    """
-    Append 6 engineered interaction features — exact replica of notebook Cell 8/14.
+    """Append six interaction features to the base feature matrix.
 
-    Features added:
-      byte_per_pkt_rate  : ByteRate / PktRate  — high in bulk transfers
-      src_dominance_dur  : SrcBytesRatio × log(1+Dur)  — C2 beacon signal
-      port_symmetry      : Sport_cat == Dport_cat  — P2P / lateral movement
-      pkt_density        : TotPkts / TotBytes  — scan burst proxy
-      proto_dport_cross  : Proto_enc × 10 + Dport_cat  — protocol-port combo
-      byte_asym_mag      : |2 × SrcBytesRatio − 1|  — asymmetry magnitude
+    Generates the exact interaction feature formulations specified in training.
+    Features:
+      - byte_per_pkt_rate: Ratio of ByteRate to PktRate.
+      - src_dominance_dur: Product of SrcBytesRatio and log1p(Dur).
+      - port_symmetry: Binary flag if Sport_cat matches Dport_cat.
+      - pkt_density: Ratio of TotPkts to TotBytes.
+      - proto_dport_cross: Combined protocol and Dport_cat category score.
+      - byte_asym_mag: Magnitude of SrcBytesRatio deviation from 0.5.
 
-    Parameters
-    ----------
-    X : np.ndarray, shape (n, 12)
-        Base features (ALL_FEATURES columns).
-    feature_names : list[str]
-        Names corresponding to columns of X.
+    Args:
+        X (np.ndarray): Base feature array of shape (N, 12).
+        feature_names (list[str]): Names of the columns corresponding to X.
 
-    Returns
-    -------
-    X_aug : np.ndarray, shape (n, 18)
-        Base features + 6 interaction features.
-    aug_names : list[str]
-        Updated feature name list.
+    Returns:
+        tuple[np.ndarray, list[str]]: Augmented features of shape (N, 18), and augmented name list.
     """
     eps = EPSILON
     idx = {f: i for i, f in enumerate(feature_names)}
@@ -68,26 +61,21 @@ def add_xgb_interactions(X, feature_names):
 
 
 def run_xgb_inference(df_scaled, xgb_model, threshold: float):
-    """
-    Run XGBoost inference on scaled flow data.
+    """Run XGBoost model classification inference on scaled traffic flows.
 
-    Parameters
-    ----------
-    df_scaled : pd.DataFrame
-        Scaled feature DataFrame with ALL_FEATURES columns.
-    xgb_model : xgboost.XGBClassifier
-        Fitted XGBoost classifier expecting 18 input columns.
-    threshold : float
-        The live decision threshold.
+    Applies interaction feature generation, computes raw XGBoost predictions,
+    performs isotonic probability calibration if fitted, and flags anomalies.
 
-    Returns
-    -------
-    probs_raw : np.ndarray, shape (n,)
-        Per-flow raw malicious probability.
-    probs_recal : np.ndarray, shape (n,)
-        Per-flow recalibrated malicious probability.
-    alerts : np.ndarray, shape (n,)
-        Per-flow alert flag (1 if probs_recal >= threshold).
+    Args:
+        df_scaled (pd.DataFrame): Scaled feature dataframe with ALL_FEATURES columns.
+        xgb_model: Fitted XGBoost classifier expecting 18 input columns.
+        threshold: Alert threshold float limit.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray, np.ndarray]:
+            - probs_raw: Raw float probability outputs.
+            - probs_recal: Recalibrated float probability outputs.
+            - alerts: Binary array (1 if anomaly, 0 otherwise).
     """
     X_base = df_scaled[ALL_FEATURES].values.astype(np.float32)
     X_aug, _ = add_xgb_interactions(X_base, list(ALL_FEATURES))

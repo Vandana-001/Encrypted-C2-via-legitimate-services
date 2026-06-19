@@ -21,11 +21,14 @@ from config import MODEL_DIR
 logger = logging.getLogger(__name__)
 
 class ModelRecalibrator:
-    """
-    Fits and applies recalibrators for XGB and TCN independently.
+    """Fits and applies two-stage (Logistic + Isotonic) recalibration layers.
+
+    Recalibrates the raw predict_proba anomaly score outputs from the XGBoost
+    and TCN models into true, aligned probability estimates.
     """
 
     def __init__(self):
+        """Initialize the model recalibrator and load pre-existing fitted layers."""
         self.xgb_lr = None
         self.xgb_iso = None
         self.tcn_lr = None
@@ -37,7 +40,7 @@ class ModelRecalibrator:
         self._load_if_exists()
 
     def _load_if_exists(self):
-        """Load from models/ if fitted artifacts exist."""
+        """Internal helper to load pickled recalibrator weights and layers from disk."""
         xgb_path = os.path.join(MODEL_DIR, "recal_xgb.pkl")
         tcn_path = os.path.join(MODEL_DIR, "recal_tcn.pkl")
 
@@ -64,14 +67,28 @@ class ModelRecalibrator:
                 logger.error("Failed to load %s: %s", tcn_path, exc)
 
     def is_fitted(self, model: str) -> bool:
+        """Check if a specific model's recalibrator is fitted.
+
+        Args:
+            model: Model identifier ("xgb" or "tcn").
+
+        Returns:
+            bool: True if fitted, False otherwise.
+        """
         with self._lock:
             return self._fitted.get(model, False)
 
     def get_status(self) -> dict:
+        """Get the recalibrator fitted status for both models.
+
+        Returns:
+            dict: Fitted status mapping for 'xgb' and 'tcn'.
+        """
         with self._lock:
             return dict(self._fitted)
 
     def reset(self):
+        """Discard fitted recalibration layers and remove pickled assets from disk."""
         with self._lock:
             self.xgb_lr = None
             self.xgb_iso = None
@@ -87,6 +104,15 @@ class ModelRecalibrator:
         if os.path.exists(tcn_path): os.remove(tcn_path)
 
     def _compute_weights(self, X, y):
+        """Compute AUC-based weights for features during recalibration regression.
+
+        Args:
+            X: Input feature array.
+            y: Ground truth labels.
+
+        Returns:
+            np.ndarray: Normalized feature weights array.
+        """
         n_features = X.shape[1]
         weights = np.zeros(n_features)
         for i in range(n_features):
@@ -104,6 +130,15 @@ class ModelRecalibrator:
         return weights
 
     def fit_xgb(self, X_aug: np.ndarray, y_true: np.ndarray, raw_probs: np.ndarray):
+        """Fit the Logistic + Isotonic recalibration pipeline for the XGBoost model.
+
+        Saves fitted parameters to the models directory.
+
+        Args:
+            X_aug: Features matrix.
+            y_true: True binary labels.
+            raw_probs: Baseline prediction probabilities from XGBoost.
+        """
         with self._lock:
             self.xgb_weights = self._compute_weights(X_aug, y_true)
             
@@ -125,6 +160,15 @@ class ModelRecalibrator:
             }, os.path.join(MODEL_DIR, "recal_xgb.pkl"))
 
     def fit_tcn(self, X_seq_scaled: np.ndarray, y_true: np.ndarray, raw_probs: np.ndarray):
+        """Fit the Logistic + Isotonic recalibration pipeline for the TCN model.
+
+        Saves fitted parameters to the models directory.
+
+        Args:
+            X_seq_scaled: 3D sequence array.
+            y_true: True binary labels.
+            raw_probs: Baseline prediction probabilities from TCN.
+        """
         with self._lock:
             # Build per-window feature matrix
             X_base_mean = X_seq_scaled[:, :, :12].mean(axis=1)  # (N, 12)
@@ -150,6 +194,15 @@ class ModelRecalibrator:
             }, os.path.join(MODEL_DIR, "recal_tcn.pkl"))
 
     def _fit_pipeline(self, X, y):
+        """Train Logistic Regression and Isotonic Regression sequentially on a train-eval split.
+
+        Args:
+            X: Calibration feature matrix.
+            y: Binary target labels.
+
+        Returns:
+            tuple[LogisticRegression, IsotonicRegression]: The fitted model pipeline stages.
+        """
         sss = StratifiedShuffleSplit(n_splits=1, test_size=0.7, random_state=42)
         train_idx, eval_idx = next(sss.split(X, y))
 
@@ -165,6 +218,15 @@ class ModelRecalibrator:
         return lr, iso
 
     def transform_xgb(self, raw_probs: np.ndarray, X_aug: np.ndarray) -> np.ndarray:
+        """Apply recalibration to raw XGBoost score predictions.
+
+        Args:
+            raw_probs: Baseline raw XGBoost probability scores.
+            X_aug: Raw feature inputs.
+
+        Returns:
+            np.ndarray: Recalibrated probability estimates.
+        """
         with self._lock:
             if not self._fitted["xgb"]:
                 return raw_probs
@@ -177,6 +239,15 @@ class ModelRecalibrator:
             return self.xgb_iso.predict(p_lr).astype(np.float32)
 
     def transform_tcn(self, raw_probs: np.ndarray, X_seq_scaled: np.ndarray) -> np.ndarray:
+        """Apply recalibration to raw TCN window predictions.
+
+        Args:
+            raw_probs: Baseline raw TCN probability scores.
+            X_seq_scaled: Raw sequence inputs.
+
+        Returns:
+            np.ndarray: Recalibrated probability estimates.
+        """
         with self._lock:
             if not self._fitted["tcn"]:
                 return raw_probs
@@ -196,4 +267,9 @@ class ModelRecalibrator:
 _recalibrator = ModelRecalibrator()
 
 def get_recalibrator() -> ModelRecalibrator:
+    """Retrieve the singleton ModelRecalibrator instance.
+
+    Returns:
+        ModelRecalibrator: The global recalibration manager.
+    """
     return _recalibrator
